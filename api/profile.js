@@ -1,3 +1,4 @@
+const https = require("https");
 const APP_ID = "936619743392459";
 const WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const MOBILE_UA = "Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)";
@@ -22,12 +23,32 @@ function igHeaders(ua, session, web) {
   return h;
 }
 
-async function getJson(url, headers) {
-  const r = await fetch(url, { headers, redirect: "manual" });
-  const text = await r.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch (_) {}
-  return { status: r.status, json, snippet: json ? (json.message || json.error_type || "") : text.slice(0, 80).replace(/\s+/g, " ") };
+// Pakai modul https (bukan fetch) agar tidak ada header Sec-Fetch-* otomatis
+// yang ditolak endpoint i.instagram.com ("SecFetch Policy violation").
+function getJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request(
+      { hostname: u.hostname, path: u.pathname + u.search, method: "GET", headers: { ...headers, "accept-encoding": "identity" } },
+      (resp) => {
+        const chunks = [];
+        resp.on("data", (c) => chunks.push(c));
+        resp.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let json = null;
+          try { json = JSON.parse(text); } catch (_) {}
+          resolve({
+            status: resp.statusCode,
+            json,
+            snippet: json ? (json.message || json.error_type || "") : text.slice(0, 80).replace(/\s+/g, " "),
+          });
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(8000, () => req.destroy(new Error("timeout")));
+    req.end();
+  });
 }
 
 module.exports = async (req, res) => {
